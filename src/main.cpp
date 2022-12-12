@@ -1,26 +1,15 @@
-//--------------------------------------------------------------------------------------------------------//
-// Thermal Image Camera - Project using ESP8266 or ESP32 and MLX90640 sensor (32x24 px)                   //
-// Design with 0.95' OLED (SD1331) and WebServer to see images (with interpolation) on any other device   //
-// Project based on MLX data sheet and examples                                                           //
-// Author: Szymon Baczyński                                                                               //
-// Date: April 2019                                                                                       //
-// Version: Ver 1.1                                                                                       //
-// GitHub: https://github.com/Samox1/ESP_Thermal_Camera_WebServer                                         //
-//--------------------------------------------------------------------------------------------------------//
-
 #include <Arduino.h>
 #include <ArduinoOTA.h>
-#include <SPI.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
+// #include <SPI.h>
+// #include <WiFi.h>
+// #include <WiFiClient.h>
 #include <Wire.h>
-
-#include "ESPAsyncWebServer.h"
+#include <ESPAsyncWebServer.h>
 #include "MLX90640_API.h"
 #include "MLX90640_I2C_Driver.h"
 #include "SPIFFS.h"
 #include <myfunction.h>
-#include <html.h>
+#include "html.h"
 
 
 
@@ -28,7 +17,6 @@ const byte MLX90640_address = 0x33;  // Default 7-bit unshifted address of the M
 paramsMLX90640 mlx90640;
 float mlx90640To[768];
 #define TA_SHIFT 8  // Default shift for MLX90640 in open air
-
 #define I2C_SCL 14	// pb avec 12 et 13 sur ESP32 CAM
 #define I2C_SDA 2
 
@@ -52,47 +40,44 @@ float mlx90640To[768];
 // the colors we will be using
 #include <colors.h>
 
-// WebServer server(80);
-//  Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 
 // Enter your SSID and PASSWORD
 // const char *ssid = "ESP";
 // const char *password = "camera";
 
-float MaxTemp = 0;
-float MinTemp = 0;
-float CenterTemp = 0;
+// float MaxTemp = 0;
+// float MinTemp = 0;
+// float CenterTemp = 0;
 
-String getCenterTemp() {
-	extern float CenterTemp;
-	return String(CenterTemp);
-}
-String getMaxTemp() {
-	extern float MaxTemp;
-	return String(MaxTemp);
-}
-String getMinTemp() {
-	extern float MinTemp;
-	return String(MinTemp);
-}
+// String getCenterTemp() {
+// 	extern float CenterTemp;
+// 	return String(CenterTemp);
+// }
+// String getMaxTemp() {
+// 	extern float MaxTemp;
+// 	return String(MaxTemp);
+// }
+// String getMinTemp() {
+// 	extern float MinTemp;
+// 	return String(MinTemp);
+// }
 
 
 // Replaces placeholder with values
-String processor(const String &var) {
-	// Serial.println(var);
-	if (var == "TEMPERATURE") {
-		return getCenterTemp();
-	}
-	if (var == "TEMPMAX") {
-		return getMaxTemp();
-	}
-	if (var == "TEMPMIN") {
-		return getMinTemp();
-	}
+// String processor(const String &var) {
+// 	if (var == "TEMPERATURE") {
+// 		return getCenterTemp();
+// 	}
+// 	if (var == "TEMPMAX") {
+// 		return getMaxTemp();
+// 	}
+// 	if (var == "TEMPMIN") {
+// 		return getMinTemp();
+// 	}
 
-	return String();
-}
+// 	return String();
+// }
 
 // Returns true if the MLX90640 is detected on the I2C bus
 boolean isConnected() {
@@ -102,7 +87,37 @@ boolean isConnected() {
 	return (true);
 }
 
-void ThermalImageToWeb(float mlx90640To[], float MinTemp, float MaxTemp) {
+boolean initMLX90640(){
+	Wire.begin(I2C_SDA, I2C_SCL, 400000); // Increase I2C clock speed to 400kHz
+
+	if (isConnected() )
+		DEBUGLOG("MLX90640 online !\n");
+	else
+		DEBUGLOG("MLX90640 not detected at default I2C address. Please check wiring.\n");
+
+	// Get device parameters - We only have to do this once
+	int status = 0;
+	uint16_t eeMLX90640[832];
+	status = MLX90640_DumpEE(MLX90640_address, eeMLX90640);
+	if (status)
+		DEBUGLOG("MLX90640 Failed to load system parameters\n");
+	else
+		DEBUGLOG("MLX90640 system parameters loaded\n");
+
+	status = MLX90640_ExtractParameters(eeMLX90640, &mlx90640);
+	if (status)
+		DEBUGLOG("MLX90640 Parameter extraction failed\n");
+	else
+		DEBUGLOG("MLX90640 Parameter extracted\n");
+
+	int SetRefreshRate = MLX90640_SetRefreshRate(MLX90640_address, 0x03);
+	// int SetInterleavedMode = MLX90640_SetInterleavedMode(MLX90640_address);
+	int SetChessMode = MLX90640_SetChessMode(MLX90640_address);
+
+	return true;
+}
+
+void ThermalImageToWeb(float mlx90640To[], float MinTemp = 0, float MaxTemp = 40) {
 	// --- SAVE BMP FILE --- //
 	uint8_t colorIndex = 0;
 	uint16_t color = 0;
@@ -224,19 +239,8 @@ void ThermalImageToWeb(float mlx90640To[], float MinTemp, float MaxTemp) {
 		}
 
 		file.close();
-		Serial.println("File Closed");
+		DEBUGLOG("File Closed\n");
 	}  // --- END SAVING BMP FILE --- //
-}
-
-void MLX_to_Serial(float mlx90640To[]) {
-	for (int x = 0; x < 768; x++) {
-		// Serial.print("Pixel ");
-		Serial.print(x);
-		Serial.print(": ");
-		Serial.print(mlx90640To[x], 2);
-		// Serial.print("C");
-		Serial.println();
-	}
 }
 
 // SETUP
@@ -246,70 +250,40 @@ void setup() {
 	DEBUGINIT();
 	mySmartConfig();
 
-	Wire.begin(I2C_SDA, I2C_SCL,400000);
-	// Wire.begin();
-	//	Wire.setClock(400000);  // Increase I2C clock speed to 400kHz
-
 	// ESP32 As access point
 	// WiFi.mode(WIFI_AP);  // Access Point mode
 	// WiFi.softAP(ssid, password);
 
-	if (isConnected() )
-		DEBUGLOG("MLX90640 online !\n");
-	else
-		DEBUGLOG("MLX90640 not detected at default I2C address. Please check wiring.\n");
+	initMLX90640();
+
 
 	if (SPIFFS.begin(true))
 		DEBUGLOG("SPIFFS mounted !\n");
 	else
 		DEBUGLOG("An Error has occurred while mounting SPIFFS\n");
 
-	// Get device parameters - We only have to do this once
-	int status = 0;
-	uint16_t eeMLX90640[832];
-	status = MLX90640_DumpEE(MLX90640_address, eeMLX90640);
-	if (status)
-		DEBUGLOG("MLX90640 Failed to load system parameters\n");
-	else
-		DEBUGLOG("MLX90640 system parameters loaded\n");
-
-	status = MLX90640_ExtractParameters(eeMLX90640, &mlx90640);
-	if (status)
-		DEBUGLOG("MLX90640 Parameter extraction failed\n");
-	else
-		DEBUGLOG("MLX90640 Parameter extracted\n");
-
-	int SetRefreshRate = MLX90640_SetRefreshRate(MLX90640_address, 0x03);
-	// int SetInterleavedMode = MLX90640_SetInterleavedMode(MLX90640_address);
-	int SetChessMode = MLX90640_SetChessMode(MLX90640_address);
 
 	// --- Part WebServer ESP --- //
 
-	// IPAddress ServerIP = WiFi.softAPIP();  // Obtain the IP of the Serve
-	// Serial.print("IP address: ");
-	// Serial.println(ServerIP);  // IP address assigned to your ESP
-	//----------------------------------------------------------------
-
 	// Route for root / web page
 	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send_P(200, "text/html", index_html, processor);
-		// request->send_P(200, "text/html", index_html);
+		// request->send_P(200, "text/html", index_html, processor);
+		request->send_P(200, "text/html", index_html);
 	});
-	server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send_P(200, "text/plain", getCenterTemp().c_str());
-	});
-	server.on("/tempmax", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send_P(200, "text/plain", getMaxTemp().c_str());
-	});
-	server.on("/tempmin", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send_P(200, "text/plain", getMinTemp().c_str());
-	});
+	// server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) {
+	// 	request->send_P(200, "text/plain", getCenterTemp().c_str());
+	// });
+	// server.on("/tempmax", HTTP_GET, [](AsyncWebServerRequest *request) {
+	// 	request->send_P(200, "text/plain", getMaxTemp().c_str());
+	// });
+	// server.on("/tempmin", HTTP_GET, [](AsyncWebServerRequest *request) {
+	// 	request->send_P(200, "text/plain", getMinTemp().c_str());
+	// });
 	server.on("/thermal", HTTP_GET, [](AsyncWebServerRequest *request) {
 		request->send(SPIFFS, "/thermal.bmp", "image/bmp", false);
 	});
 
 	server.begin();  // Start server
-	Serial.println("HTTP server started");
 
 	ArduinoOTA.begin();
 	DEBUGLOG("Setup Done\n");
@@ -326,10 +300,8 @@ void loop() {
 	{
 		uint16_t mlx90640Frame[834];
 		int status = MLX90640_GetFrameData(MLX90640_address, mlx90640Frame);
-		if (status < 0) {
-			Serial.print("GetFrame Error: ");
-			Serial.println(status);
-		}
+		if (status < 0)
+			DEBUGLOG("GetFrame Error: %d\n",status);
 
 		float vdd = MLX90640_GetVdd(mlx90640Frame, &mlx90640);
 		float Ta = MLX90640_GetTa(mlx90640Frame, &mlx90640);
@@ -353,11 +325,9 @@ void loop() {
 		for(int i=0; i<h; i++) {
 		  for(int j=0; j<w; j++) {
 			if((i+j)%2 == 0){
-			  //Serial.println(j+(w*i));
 			  sumpa = mlx90640To[j+(w*i)];
 			  pa++;
 			}else{
-			  //Serial.print("*"); Serial.println(j+(w*i));
 			  sumniepa = mlx90640To[j+(w*i)];
 			  niepa++;
 			}
@@ -391,26 +361,22 @@ void loop() {
 		}       
 	// --- END of Calculate Chess Mode --- //
 
-	CenterTemp = (mlx90640To[165] + mlx90640To[180] + mlx90640To[176] + mlx90640To[192]) / 4.0;  // Temp in Center - based on 4 pixels
+	// CenterTemp = (mlx90640To[165] + mlx90640To[180] + mlx90640To[176] + mlx90640To[192]) / 4.0;  // Temp in Center - based on 4 pixels
 
-	MaxTemp = mlx90640To[0];  // Get first data to find Max and Min Temperature
-	MinTemp = mlx90640To[0];
+	// MaxTemp = mlx90640To[0];  // Get first data to find Max and Min Temperature
+	// MinTemp = mlx90640To[0];
 
-	for (int x = 0; x < 768; x++)  // Find Maximum and Minimum Temperature
-	{
-		if (mlx90640To[x] > MaxTemp) {
-			MaxTemp = mlx90640To[x];
-		}
-		if (mlx90640To[x] < MinTemp) {
-			MinTemp = mlx90640To[x];
-		}
-	}
+	// for (int x = 0; x < 768; x++)  // Find Maximum and Minimum Temperature
+	// {
+	// 	if (mlx90640To[x] > MaxTemp) {
+	// 		MaxTemp = mlx90640To[x];
+	// 	}
+	// 	if (mlx90640To[x] < MinTemp) {
+	// 		MinTemp = mlx90640To[x];
+	// 	}
+	// }
 
-	ThermalImageToWeb(mlx90640To, MinTemp, MaxTemp);
-	// display.fillRect(0, 0, 96, 48, BLACK);    // Black important sector - image and text on right side
-
-	// MLX_to_Serial(mlx90640To);
-	// display.fillScreen(BLACK);
-
+	// ThermalImageToWeb(mlx90640To, MinTemp, MaxTemp);
+	ThermalImageToWeb(mlx90640To);
 	delay(100);
 }
